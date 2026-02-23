@@ -22,6 +22,10 @@ groups/global/*
 *.keys.json
 .env
 
+# Custom overlay (upgrade-safe, not tracked upstream)
+Dockerfile.custom
+nanoclaw.service
+
 # OS
 .DS_Store
 

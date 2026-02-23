@@ -414,6 +414,13 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Some API proxies only support alias models (e.g. sonnet-4.5) and
+  // reject Claude's canonical model IDs. Allow forcing a compatible model.
+  const forcedModel = process.env.NANOCLAW_MODEL || process.env.ANTHROPIC_MODEL;
+  if (forcedModel) {
+    log(`Using forced model: ${forcedModel}`);
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -438,6 +445,7 @@ async function runQuery(
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
+      model: forcedModel,
       mcpServers: {
         nanoclaw: {
           command: 'node',
