@@ -1,0 +1,17 @@
+[Unit]
+Description=NanoClaw WhatsApp Agent
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=nad
+WorkingDirectory=/home/nad/nanoclaw
+EnvironmentFile=-/home/nad/nanoclaw/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

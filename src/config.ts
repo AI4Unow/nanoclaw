@@ -9,12 +9,28 @@ import { readEnvFile } from './env.js';
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_ONLY',
+  'EXTERNAL_API_UNAVAILABLE_MESSAGE',
+  'EXTERNAL_API_AUTH_ERROR_MESSAGE',
 ]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER || envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+export const TELEGRAM_BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_ONLY =
+  (process.env.TELEGRAM_ONLY || envConfig.TELEGRAM_ONLY) === 'true';
+export const EXTERNAL_API_UNAVAILABLE_MESSAGE =
+  process.env.EXTERNAL_API_UNAVAILABLE_MESSAGE ||
+  envConfig.EXTERNAL_API_UNAVAILABLE_MESSAGE ||
+  'The model endpoint is temporarily unavailable (timeout/network). Please try again in 1-2 minutes.';
+export const EXTERNAL_API_AUTH_ERROR_MESSAGE =
+  process.env.EXTERNAL_API_AUTH_ERROR_MESSAGE ||
+  envConfig.EXTERNAL_API_AUTH_ERROR_MESSAGE ||
+  'The model endpoint rejected authentication (API key). Please check the external API key configuration.';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

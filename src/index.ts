@@ -6,9 +6,12 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -38,6 +41,7 @@ import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { getExternalApiFailureMessage } from './agent-error.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -180,6 +184,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
+  let streamedError: string | undefined;
   let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
@@ -203,13 +208,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (result.status === 'error') {
       hadError = true;
+      if (result.error) streamedError = result.error;
     }
   });
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
+  if (output.status === 'error' || hadError) {
+    const agentErrorText = output.status === 'error' ? output.error : undefined;
+
+    if (!outputSentToUser) {
+      const fallback = getExternalApiFailureMessage(agentErrorText || streamedError);
+      if (fallback) {
+        try {
+          await channel.sendMessage(chatJid, fallback);
+          outputSentToUser = true;
+          logger.warn(
+            { group: group.name, chatJid, error: agentErrorText || streamedError },
+            'Sent external API fallback message after agent failure',
+          );
+        } catch (err) {
+          logger.warn(
+            { group: group.name, chatJid, err },
+            'Failed to send external API fallback message',
+          );
+        }
+      }
+    }
+
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
@@ -226,12 +253,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   return true;
 }
 
+type AgentRunResult =
+  | { status: 'success' }
+  | { status: 'error'; error?: string };
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
-): Promise<'success' | 'error'> {
+): Promise<AgentRunResult> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
 
@@ -263,12 +294,12 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
-        }
-        await onOutput(output);
+      if (output.newSessionId) {
+        sessions[group.folder] = output.newSessionId;
+        setSession(group.folder, output.newSessionId);
       }
+      await onOutput(output);
+    }
     : undefined;
 
   try {
@@ -296,13 +327,16 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return 'error';
+      return { status: 'error', error: output.error };
     }
 
-    return 'success';
+    return { status: 'success' };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return 'error';
+    return {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -445,9 +479,24 @@ async function main(): Promise<void> {
   };
 
   // Create and connect channels
-  whatsapp = new WhatsAppChannel(channelOpts);
-  channels.push(whatsapp);
-  await whatsapp.connect();
+  if (!TELEGRAM_ONLY) {
+    whatsapp = new WhatsAppChannel(channelOpts);
+    channels.push(whatsapp);
+    try {
+      await whatsapp.connect();
+    } catch (err) {
+      logger.warn({ err }, 'WhatsApp connection failed (non-fatal, continuing with other channels)');
+    }
+  } else {
+    logger.info('WhatsApp channel disabled via TELEGRAM_ONLY=true');
+  }
+
+  // Telegram channel (enabled when TELEGRAM_BOT_TOKEN is set)
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
