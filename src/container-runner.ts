@@ -15,6 +15,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
+import { syncAgentRunnerSource } from './agent-runner-sync.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -151,13 +152,31 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
-  // can customize it (add tools, change behavior) without affecting other
-  // groups. Recompiled on container startup via entrypoint.sh.
+  // Keep a per-group writable overlay for agent-runner source. We auto-sync
+  // upstream updates for untouched files while preserving local customizations.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   const groupAgentRunnerDir = path.join(DATA_DIR, 'sessions', group.folder, 'agent-runner-src');
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  const syncStats = syncAgentRunnerSource(agentRunnerSrc, groupAgentRunnerDir);
+  if (syncStats.copied > 0 || syncStats.updated > 0) {
+    logger.info(
+      {
+        group: group.name,
+        folder: group.folder,
+        copied: syncStats.copied,
+        updated: syncStats.updated,
+      },
+      'Synced agent-runner source overlay',
+    );
+  }
+  if (syncStats.preserved > 0) {
+    logger.warn(
+      {
+        group: group.name,
+        folder: group.folder,
+        preserved: syncStats.preserved,
+      },
+      'Preserved customized agent-runner overlay files',
+    );
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
