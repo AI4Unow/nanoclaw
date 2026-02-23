@@ -9,6 +9,8 @@ const AUTH_ERROR_PATTERNS = [
   /invalid api key/i,
   /authentication/i,
   /unauthori[sz]ed/i,
+  /auth_not_found/i,
+  /no auth available/i,
   /\b401\b/,
   /\b403\b/,
   /forbidden/i,
@@ -17,6 +19,8 @@ const AUTH_ERROR_PATTERNS = [
 const UNAVAILABLE_ERROR_PATTERNS = [
   /upstream request timeout/i,
   /connection error/i,
+  /unknown provider for model/i,
+  /internal_server_error/i,
   /\b504\b/,
   /\b503\b/,
   /\b502\b/,

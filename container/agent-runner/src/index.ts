@@ -516,12 +516,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Build SDK env: merge secrets into process.env for the SDK only.
-  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
+  // Build SDK env and ensure SDK auth sees secrets.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+  const secretEntries = Object.entries(containerInput.secrets || {});
+  for (const [key, value] of secretEntries) {
     sdkEnv[key] = value;
+    // Claude SDK auth resolution relies on process.env in some code paths.
+    // Bash commands still get secrets unset via PreToolUse sanitization hook.
+    process.env[key] = value;
   }
+  log(`Loaded secret keys: ${secretEntries.map(([k]) => k).join(', ') || 'none'}`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
