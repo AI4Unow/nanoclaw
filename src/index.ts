@@ -3,6 +3,9 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
+  EMAIL_CHANNEL_ENABLED,
+  EMAIL_POLL_INTERVAL,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -28,6 +31,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  markEmailProcessed,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -42,6 +46,15 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { getExternalApiFailureMessage } from './agent-error.js';
+import {
+  buildEmailGroup,
+  ensureEmailGroupFolder,
+  fetchNewEmails,
+  formatEmailPrompt,
+  senderContextKey,
+  sendEmailReply,
+  EMAIL_JID_PREFIX,
+} from './email-channel.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -159,12 +172,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages);
 
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
+  // Advance cursor in-memory so the piping path in startMessageLoop won't
+  // re-fetch these messages during this run. We do NOT persist to DB yet —
+  // only save after the agent succeeds. If the service is killed mid-run,
+  // the DB cursor stays at previousCursor so recoverPendingMessages() on
+  // restart will find these messages again.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -243,15 +258,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn({ group: group.name }, 'Agent error after output was sent, skipping cursor rollback to prevent duplicates');
+      // Persist the advanced cursor since the user got their response
+      saveState();
       return true;
     }
-    // Roll back cursor so retries can re-process these messages
+    // Roll back in-memory cursor — DB was never updated so no saveState() needed
     lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
     logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
     return false;
   }
 
+  // Persist cursor to DB only after successful agent run
+  saveState();
   return true;
 }
 
@@ -456,6 +474,60 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+/**
+ * Email polling loop — checks Gmail every EMAIL_POLL_INTERVAL ms.
+ * Runs the agent for each new email and sends a reply.
+ */
+async function startEmailLoop(): Promise<void> {
+  if (!EMAIL_CHANNEL_ENABLED) {
+    logger.info('Email channel disabled');
+    return;
+  }
+  logger.info({ prefix: process.env.EMAIL_SUBJECT_PREFIX || '[Capie]' }, 'Email channel started');
+
+  while (true) {
+    try {
+      const emails = await fetchNewEmails();
+      for (const email of emails) {
+        const contextKey = senderContextKey(email.from);
+        const chatJid = `${EMAIL_JID_PREFIX}${email.from}`;
+        logger.info({ from: email.from, subject: email.subject }, 'Processing email');
+
+        // Mark as processed AFTER reply to avoid losing emails on crash/restart
+        ensureEmailGroupFolder(contextKey);
+        const emailGroup = buildEmailGroup(contextKey);
+        const prompt = formatEmailPrompt(email);
+
+        // Collect streamed result text, then close container immediately
+        let replyText = '';
+        await runAgent(emailGroup, prompt, chatJid, async (output) => {
+          if (output.result) {
+            const text = output.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+            if (text) {
+              replyText += (replyText ? '\n' : '') + text;
+              // Write _close sentinel directly — queue.closeStdin requires state.active
+              // which is only set via runForGroup, not the direct runAgent path
+              const ipcInputDir = path.join(DATA_DIR, 'ipc', contextKey, 'input');
+              fs.mkdirSync(ipcInputDir, { recursive: true });
+              fs.writeFileSync(path.join(ipcInputDir, '_close'), '');
+            }
+          }
+        });
+
+        if (replyText) {
+          await sendEmailReply(email, replyText);
+          markEmailProcessed(email.id, email.threadId, email.from, email.subject);
+        } else {
+          logger.warn({ from: email.from }, 'Email agent produced no reply');
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error in email loop');
+    }
+    await new Promise(resolve => setTimeout(resolve, EMAIL_POLL_INTERVAL));
+  }
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
@@ -533,6 +605,11 @@ async function main(): Promise<void> {
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
+  });
+
+  // Start email channel loop (polls Gmail for emails matching subject prefix)
+  startEmailLoop().catch((err) => {
+    logger.error({ err }, 'Email loop crashed, not restarting');
   });
 }
 

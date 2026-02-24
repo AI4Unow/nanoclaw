@@ -83,3 +83,8 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Email channel config — trigger on subject prefix, group context per sender
+export const EMAIL_SUBJECT_PREFIX = process.env.EMAIL_SUBJECT_PREFIX || '[Capie]';
+export const EMAIL_POLL_INTERVAL = parseInt(process.env.EMAIL_POLL_INTERVAL || '60000', 10);
+export const EMAIL_CHANNEL_ENABLED = process.env.EMAIL_CHANNEL_ENABLED !== 'false';

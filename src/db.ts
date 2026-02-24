@@ -125,6 +125,7 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   createSchema(db);
+  initEmailTable();
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -600,7 +601,33 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   return result;
 }
 
-// --- JSON migration ---
+// --- Email channel state ---
+
+export function initEmailTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS processed_emails (
+      message_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      subject TEXT,
+      processed_at TEXT NOT NULL,
+      response_sent INTEGER DEFAULT 0
+    )
+  `);
+}
+
+export function isEmailProcessed(messageId: string): boolean {
+  return !!db.prepare('SELECT 1 FROM processed_emails WHERE message_id = ?').get(messageId);
+}
+
+export function markEmailProcessed(messageId: string, threadId: string, sender: string, subject: string): void {
+  db.prepare(`INSERT OR REPLACE INTO processed_emails (message_id, thread_id, sender, subject, processed_at) VALUES (?, ?, ?, ?, ?)`)
+    .run(messageId, threadId, sender, subject, new Date().toISOString());
+}
+
+export function markEmailResponded(messageId: string): void {
+  db.prepare('UPDATE processed_emails SET response_sent = 1 WHERE message_id = ?').run(messageId);
+}
 
 function migrateJsonState(): void {
   const migrateFile = (filename: string) => {
