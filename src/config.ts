@@ -31,7 +31,7 @@ export const EXTERNAL_API_AUTH_ERROR_MESSAGE =
   process.env.EXTERNAL_API_AUTH_ERROR_MESSAGE ||
   envConfig.EXTERNAL_API_AUTH_ERROR_MESSAGE ||
   'The model endpoint rejected authentication (API key). Please check the external API key configuration.';
-export const POLL_INTERVAL = 2000;
+export const POLL_INTERVAL = 500;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
