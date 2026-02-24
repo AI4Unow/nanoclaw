@@ -189,6 +189,31 @@ export class TelegramChannel implements Channel {
     });
   }
 
+  /** Strip markdown formatting so Telegram displays clean plain text */
+  private stripMarkdown(text: string): string {
+    return text
+      // Code blocks (must come before inline code)
+      .replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim())
+      // Inline code
+      .replace(/`([^`]+)`/g, '$1')
+      // Bold/italic (**, __, *, _)
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/_([^_]+)_/g, '$1')
+      // Headers
+      .replace(/^#{1,6}\s+/gm, '')
+      // Links: [text](url) → text
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      // Blockquotes
+      .replace(/^>\s*/gm, '')
+      // Horizontal rules
+      .replace(/^[-*_]{3,}\s*$/gm, '')
+      // Collapse 3+ newlines to 2
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
@@ -197,20 +222,21 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
+      const plain = this.stripMarkdown(text);
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
-      if (text.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(numericId, text);
+      if (plain.length <= MAX_LENGTH) {
+        await this.bot.api.sendMessage(numericId, plain);
       } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
+        for (let i = 0; i < plain.length; i += MAX_LENGTH) {
           await this.bot.api.sendMessage(
             numericId,
-            text.slice(i, i + MAX_LENGTH),
+            plain.slice(i, i + MAX_LENGTH),
           );
         }
       }
-      logger.info({ jid, length: text.length }, 'Telegram message sent');
+      logger.info({ jid, length: plain.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
