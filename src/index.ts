@@ -196,6 +196,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await channel.sendMessage(chatJid, text);
+        // Clear typing indicator as soon as response is sent
+        await channel.setTyping?.(chatJid, false);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
