@@ -493,7 +493,7 @@ async function main(): Promise<void> {
 
   // Telegram channel (enabled when TELEGRAM_BOT_TOKEN is set)
   if (TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramChannel(channelOpts);
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
     channels.push(telegram);
     await telegram.connect();
   }

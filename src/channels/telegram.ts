@@ -1,8 +1,13 @@
-import TelegramBot from 'node-telegram-bot-api';
+import { Bot } from 'grammy';
 
-import { TELEGRAM_BOT_TOKEN } from '../config.js';
+import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import {
+  Channel,
+  OnChatMetadata,
+  OnInboundMessage,
+  RegisteredGroup,
+} from '../types.js';
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -10,125 +15,209 @@ export interface TelegramChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
-/**
- * TelegramChannel — implements the Channel interface for Telegram Bot API.
- *
- * JID format: "tg:<chat_id>" for groups, "tg:<user_id>" for DMs.
- * The bot uses long polling (no webhook needed).
- *
- * Env vars:
- *   TELEGRAM_BOT_TOKEN — required, from @BotFather
- */
 export class TelegramChannel implements Channel {
   name = 'telegram';
-  private bot!: TelegramBot;
-  private connected = false;
-  private onMessage: OnInboundMessage;
-  private onChatMetadata: OnChatMetadata;
-  private registeredGroups: () => Record<string, RegisteredGroup>;
 
-  constructor(opts: TelegramChannelOpts) {
-    this.onMessage = opts.onMessage;
-    this.onChatMetadata = opts.onChatMetadata;
-    this.registeredGroups = opts.registeredGroups;
+  private bot: Bot | null = null;
+  private opts: TelegramChannelOpts;
+  private botToken: string;
+  // Typing indicator intervals keyed by chat JID — Telegram typing expires ~5s
+  private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
+
+  constructor(botToken: string, opts: TelegramChannelOpts) {
+    this.botToken = botToken;
+    this.opts = opts;
   }
 
   async connect(): Promise<void> {
-    if (!TELEGRAM_BOT_TOKEN) {
-      logger.warn('TELEGRAM_BOT_TOKEN not set, Telegram channel disabled');
-      return;
-    }
+    this.bot = new Bot(this.botToken);
 
-    this.bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+    // Command to get chat ID (useful for registration)
+    this.bot.command('chatid', (ctx) => {
+      const chatId = ctx.chat.id;
+      const chatType = ctx.chat.type;
+      const chatName =
+        chatType === 'private'
+          ? ctx.from?.first_name || 'Private'
+          : (ctx.chat as any).title || 'Unknown';
 
-    const botInfo = await this.bot.getMe();
-    logger.info(
-      { botUsername: botInfo.username, botId: botInfo.id },
-      'Telegram bot connected',
-    );
-
-    this.bot.on('message', (msg) => this.handleMessage(msg));
-
-    this.bot.on('polling_error', (err) => {
-      logger.error({ err }, 'Telegram polling error');
+      ctx.reply(
+        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        { parse_mode: 'Markdown' },
+      );
     });
 
-    this.connected = true;
-    logger.info('Telegram channel connected');
-  }
+    // Command to check bot status
+    this.bot.command('ping', (ctx) => {
+      ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
 
-  private handleMessage(msg: TelegramBot.Message): void {
-    if (!msg.text) return; // Skip non-text messages for now
-    if (msg.from?.is_bot) return; // Ignore other bots
+    this.bot.on('message:text', async (ctx) => {
+      // Skip commands
+      if (ctx.message.text.startsWith('/')) return;
 
-    const chatId = msg.chat.id;
-    const jid = `tg:${chatId}`;
-    const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+      const chatJid = `tg:${ctx.chat.id}`;
+      let content = ctx.message.text;
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id.toString() ||
+        'Unknown';
+      const sender = ctx.from?.id.toString() || '';
+      const msgId = ctx.message.message_id.toString();
 
-    // Build sender name
-    const senderName = [msg.from?.first_name, msg.from?.last_name]
-      .filter(Boolean)
-      .join(' ') || msg.from?.username || 'Unknown';
+      // Determine chat name
+      const chatName =
+        ctx.chat.type === 'private'
+          ? senderName
+          : (ctx.chat as any).title || chatJid;
 
-    // Build chat name
-    const chatName = isGroup
-      ? msg.chat.title || `Telegram Group ${chatId}`
-      : senderName;
+      // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
+      // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
+      // (e.g., ^@Andy\b), so we prepend the trigger when the bot is @mentioned.
+      const botUsername = ctx.me?.username?.toLowerCase();
+      if (botUsername) {
+        const entities = ctx.message.entities || [];
+        const isBotMentioned = entities.some((entity) => {
+          if (entity.type === 'mention') {
+            const mentionText = content
+              .substring(entity.offset, entity.offset + entity.length)
+              .toLowerCase();
+            return mentionText === `@${botUsername}`;
+          }
+          return false;
+        });
+        if (isBotMentioned && !TRIGGER_PATTERN.test(content)) {
+          content = `@${ASSISTANT_NAME} ${content}`;
+        }
+      }
 
-    // Store chat metadata (Telegram delivers names inline)
-    const timestamp = new Date(msg.date * 1000).toISOString();
-    this.onChatMetadata(jid, timestamp, chatName, 'telegram', isGroup);
+      // Store chat metadata for discovery
+      this.opts.onChatMetadata(chatJid, timestamp, chatName);
 
-    // Build NewMessage
-    const newMessage = {
-      id: `tg_${msg.message_id}_${chatId}`,
-      chat_jid: jid,
-      sender: msg.from?.id?.toString() || 'unknown',
-      sender_name: senderName,
-      content: msg.text,
-      timestamp,
-      is_from_me: false,
-      is_bot_message: false,
+      // Only deliver full message for registered groups
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        logger.debug(
+          { chatJid, chatName },
+          'Message from unregistered Telegram chat',
+        );
+        return;
+      }
+
+      // Deliver message — startMessageLoop() will pick it up
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender,
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+
+      logger.info(
+        { chatJid, chatName, sender: senderName },
+        'Telegram message stored',
+      );
+    });
+
+    // Handle non-text messages with placeholders so the agent knows something was sent
+    const storeNonText = (ctx: any, placeholder: string) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+
+      this.opts.onChatMetadata(chatJid, timestamp);
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content: `${placeholder}${caption}`,
+        timestamp,
+        is_from_me: false,
+      });
     };
 
-    this.onMessage(jid, newMessage);
+    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
+    this.bot.on('message:voice', (ctx) =>
+      storeNonText(ctx, '[Voice message]'),
+    );
+    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+    this.bot.on('message:document', (ctx) => {
+      const name = ctx.message.document?.file_name || 'file';
+      storeNonText(ctx, `[Document: ${name}]`);
+    });
+    this.bot.on('message:sticker', (ctx) => {
+      const emoji = ctx.message.sticker?.emoji || '';
+      storeNonText(ctx, `[Sticker ${emoji}]`);
+    });
+    this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
+    this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+
+    // Handle errors gracefully
+    this.bot.catch((err) => {
+      logger.error({ err: err.message }, 'Telegram bot error');
+    });
+
+    // Start polling — returns a Promise that resolves when started
+    return new Promise<void>((resolve) => {
+      this.bot!.start({
+        onStart: (botInfo) => {
+          logger.info(
+            { username: botInfo.username, id: botInfo.id },
+            'Telegram bot connected',
+          );
+          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(
+            `  Send /chatid to the bot to get a chat's registration ID\n`,
+          );
+          resolve();
+        },
+      });
+    });
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    if (!this.bot || !this.connected) {
-      logger.warn({ jid }, 'Cannot send: Telegram not connected');
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
       return;
     }
 
-    const chatId = jid.replace(/^tg:/, '');
+    try {
+      const numericId = jid.replace(/^tg:/, '');
 
-    // Telegram has a 4096 char limit per message. Split if needed.
-    const MAX_LEN = 4096;
-    const chunks: string[] = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      if (remaining.length <= MAX_LEN) {
-        chunks.push(remaining);
-        break;
+      // Telegram has a 4096 character limit per message — split if needed
+      const MAX_LENGTH = 4096;
+      if (text.length <= MAX_LENGTH) {
+        await this.bot.api.sendMessage(numericId, text);
+      } else {
+        for (let i = 0; i < text.length; i += MAX_LENGTH) {
+          await this.bot.api.sendMessage(
+            numericId,
+            text.slice(i, i + MAX_LENGTH),
+          );
+        }
       }
-      // Try to split at a newline
-      let splitAt = remaining.lastIndexOf('\n', MAX_LEN);
-      if (splitAt <= 0) splitAt = MAX_LEN;
-      chunks.push(remaining.slice(0, splitAt));
-      remaining = remaining.slice(splitAt).trimStart();
-    }
-
-    for (const chunk of chunks) {
-      try {
-        await this.bot.sendMessage(chatId, chunk, { parse_mode: undefined });
-      } catch (err) {
-        logger.error({ jid, err }, 'Failed to send Telegram message');
-      }
+      logger.info({ jid, length: text.length }, 'Telegram message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send Telegram message');
     }
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.bot !== null;
   }
 
   ownsJid(jid: string): boolean {
@@ -136,20 +225,43 @@ export class TelegramChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    // Clear all typing intervals
+    for (const interval of this.typingIntervals.values()) {
+      clearInterval(interval);
+    }
+    this.typingIntervals.clear();
+
     if (this.bot) {
-      await this.bot.stopPolling();
-      this.connected = false;
-      logger.info('Telegram channel disconnected');
+      this.bot.stop();
+      this.bot = null;
+      logger.info('Telegram bot stopped');
     }
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    if (!this.bot || !this.connected || !isTyping) return;
-    const chatId = jid.replace(/^tg:/, '');
-    try {
-      await this.bot.sendChatAction(chatId, 'typing');
-    } catch (err) {
-      logger.warn({ jid, err }, 'Failed to send typing action');
+    if (!this.bot) return;
+    const numericId = jid.replace(/^tg:/, '');
+
+    if (!isTyping) {
+      // Clear the repeating typing indicator
+      const existing = this.typingIntervals.get(jid);
+      if (existing) {
+        clearInterval(existing);
+        this.typingIntervals.delete(jid);
+      }
+      return;
     }
+
+    // Send immediately, then repeat every 4s (Telegram typing expires after ~5s)
+    const sendTyping = () => {
+      this.bot?.api
+        .sendChatAction(numericId, 'typing')
+        .catch((err: Error) =>
+          logger.debug({ jid, err }, 'Failed to send Telegram typing indicator'),
+        );
+    };
+    sendTyping();
+    const interval = setInterval(sendTyping, 4000);
+    this.typingIntervals.set(jid, interval);
   }
 }
