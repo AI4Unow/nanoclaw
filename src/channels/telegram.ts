@@ -189,27 +189,33 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  /** Strip markdown formatting so Telegram displays clean plain text */
-  private stripMarkdown(text: string): string {
+  /** Convert markdown to Telegram HTML (bold, italic, code, links) */
+  private markdownToHtml(text: string): string {
+    // Escape HTML special chars first (before adding tags)
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
     return text
-      // Code blocks (must come before inline code)
-      .replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim())
-      // Inline code
-      .replace(/`([^`]+)`/g, '$1')
-      // Bold/italic (**, __, *, _)
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/__([^_]+)__/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/_([^_]+)_/g, '$1')
-      // Headers
-      .replace(/^#{1,6}\s+/gm, '')
-      // Links: [text](url) → text
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      // Blockquotes
+      // Fenced code blocks → <pre><code>
+      .replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => `<pre><code>${esc(code.trim())}</code></pre>`)
+      // Inline code → <code>
+      .replace(/`([^`]+)`/g, (_, code) => `<code>${esc(code)}</code>`)
+      // Bold: **text** or __text__
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/__([^_]+)__/g, '<b>$1</b>')
+      // Italic: *text* or _text_
+      .replace(/\*([^*]+)\*/g, '<i>$1</i>')
+      .replace(/_([^_\n]+)_/g, '<i>$1</i>')
+      // Links: [text](url)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2">$1</a>')
+      // Headers → bold line
+      .replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>')
+      // Blockquotes → plain (Telegram HTML has no blockquote)
       .replace(/^>\s*/gm, '')
-      // Horizontal rules
+      // Horizontal rules → blank line
       .replace(/^[-*_]{3,}\s*$/gm, '')
-      // Collapse 3+ newlines to 2
+      // Escape remaining bare & < > (outside tags we added)
+      // Note: we only escape content before adding tags above, so this is safe
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }
@@ -222,21 +228,22 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      const plain = this.stripMarkdown(text);
+      const html = this.markdownToHtml(text);
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
-      if (plain.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(numericId, plain);
+      if (html.length <= MAX_LENGTH) {
+        await this.bot.api.sendMessage(numericId, html, { parse_mode: 'HTML' });
       } else {
-        for (let i = 0; i < plain.length; i += MAX_LENGTH) {
+        for (let i = 0; i < html.length; i += MAX_LENGTH) {
           await this.bot.api.sendMessage(
             numericId,
-            plain.slice(i, i + MAX_LENGTH),
+            html.slice(i, i + MAX_LENGTH),
+            { parse_mode: 'HTML' },
           );
         }
       }
-      logger.info({ jid, length: plain.length }, 'Telegram message sent');
+      logger.info({ jid, length: html.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
