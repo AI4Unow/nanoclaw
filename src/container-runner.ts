@@ -16,6 +16,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { syncAgentRunnerSource } from './agent-runner-sync.js';
+import { ensureOverlayCompiled } from './agent-runner-compile.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -183,6 +184,18 @@ function buildVolumeMounts(
     containerPath: '/app/src',
     readonly: false,
   });
+
+  // Pre-compile overlay source on the host so the container skips tsc (~40s cold start).
+  // Mounts compiled JS to /app/dist — entrypoint timestamp check passes, tsc is skipped.
+  const groupAgentRunnerDistDir = path.join(DATA_DIR, 'sessions', group.folder, 'agent-runner-dist');
+  ensureOverlayCompiled(groupAgentRunnerDir, groupAgentRunnerDistDir);
+  if (fs.existsSync(path.join(groupAgentRunnerDistDir, 'index.js'))) {
+    mounts.push({
+      hostPath: groupAgentRunnerDistDir,
+      containerPath: '/app/dist',
+      readonly: true,
+    });
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
