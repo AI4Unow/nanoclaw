@@ -445,6 +445,10 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         'mcp__gmail__*',
+        'mcp__exa__*',
+        'mcp__google-calendar__*',
+        'mcp__google-drive__*',
+        'mcp__memory__*',
         'mcp__parallel-search__*',
         'mcp__parallel-task__*',
       ],
@@ -464,6 +468,39 @@ async function runQuery(
           },
         },
         gmail: { command: 'npx', args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'] },
+        ...(process.env.EXA_API_KEY ? {
+          exa: {
+            command: 'npx',
+            args: ['-y', 'exa-mcp-server'],
+            env: {
+              EXA_API_KEY: process.env.EXA_API_KEY,
+            },
+          },
+        } : {}),
+        'google-calendar': {
+          command: 'npx',
+          args: ['-y', '@gongrzhe/server-calendar-autoauth-mcp'],
+          env: {
+            ...(process.env.GOOGLE_CREDENTIALS ? { GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS } : {}),
+          },
+        },
+        'google-drive': {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            ...(process.env.GOOGLE_CREDENTIALS ? { GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS } : {}),
+          },
+        },
+        memory: {
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'memory-mcp-stdio.js')],
+          env: {
+            MEMORY_API_URL: process.env.MEMORY_API_URL || 'https://memory.ai4u.now',
+            MEMORY_API_KEY: process.env.MEMORY_API_KEY || '',
+            MEMORY_NAMESPACE: containerInput.groupFolder,
+            MEMORY_IS_ADMIN: containerInput.isMain ? '1' : '0',
+          },
+        },
         ...(process.env.PARALLEL_API_KEY ? {
           'parallel-search': {
             type: 'http' as const,

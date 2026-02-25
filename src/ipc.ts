@@ -170,6 +170,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For install_skill
+    skillName?: string;
+    skillContent?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -379,6 +382,53 @@ export async function processTaskIpc(
           'Invalid register_group request - missing required fields',
         );
       }
+      break;
+
+    case 'install_skill':
+      // Only main group can install shared skills
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized install_skill attempt blocked',
+        );
+        break;
+      }
+
+      if (!data.skillName || !data.skillContent) {
+        logger.warn(
+          { sourceGroup },
+          'Invalid install_skill request - missing required fields',
+        );
+        break;
+      }
+
+      if (!/^[a-z0-9-]+$/.test(data.skillName)) {
+        logger.warn(
+          { sourceGroup, skillName: data.skillName },
+          'Invalid install_skill request - unsafe skill name',
+        );
+        break;
+      }
+
+      {
+        const skillDir = path.join(
+          process.cwd(),
+          'container',
+          'skills',
+          data.skillName,
+        );
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(skillDir, 'SKILL.md'),
+          data.skillContent,
+          'utf-8',
+        );
+      }
+
+      logger.info(
+        { sourceGroup, skillName: data.skillName },
+        'Skill installed via IPC',
+      );
       break;
 
     default:

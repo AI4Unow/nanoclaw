@@ -238,6 +238,10 @@ function readSecrets(): Record<string, string> {
     'ANTHROPIC_DEFAULT_SONNET_MODEL',
     'ANTHROPIC_DEFAULT_OPUS_MODEL',
     'PARALLEL_API_KEY',
+    'EXA_API_KEY',
+    'GOOGLE_CREDENTIALS',
+    'MEMORY_API_URL',
+    'MEMORY_API_KEY',
   ]);
 }
 

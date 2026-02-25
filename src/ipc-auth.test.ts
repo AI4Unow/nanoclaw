@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import {
   _initTestDatabase,
@@ -317,6 +320,104 @@ describe('register_group authorization', () => {
     );
 
     expect(groups['new@g.us']).toBeUndefined();
+  });
+});
+
+// --- install_skill authorization ---
+
+describe('install_skill authorization', () => {
+  it('non-main group cannot install skills', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-skill-test-'));
+    const previousCwd = process.cwd();
+    fs.mkdirSync(path.join(tempDir, 'container', 'skills'), { recursive: true });
+
+    try {
+      process.chdir(tempDir);
+      await processTaskIpc(
+        {
+          type: 'install_skill',
+          skillName: 'blocked-skill',
+          skillContent: '# blocked',
+        },
+        'other-group',
+        false,
+        deps,
+      );
+
+      expect(
+        fs.existsSync(
+          path.join(tempDir, 'container', 'skills', 'blocked-skill', 'SKILL.md'),
+        ),
+      ).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('main group can install a skill', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-skill-test-'));
+    const previousCwd = process.cwd();
+    fs.mkdirSync(path.join(tempDir, 'container', 'skills'), { recursive: true });
+
+    try {
+      process.chdir(tempDir);
+      await processTaskIpc(
+        {
+          type: 'install_skill',
+          skillName: 'new-skill',
+          skillContent: '# New Skill\n\nInstructions.',
+        },
+        'main',
+        true,
+        deps,
+      );
+
+      const skillPath = path.join(
+        tempDir,
+        'container',
+        'skills',
+        'new-skill',
+        'SKILL.md',
+      );
+      expect(fs.existsSync(skillPath)).toBe(true);
+      expect(fs.readFileSync(skillPath, 'utf-8')).toContain('# New Skill');
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe skill names', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-skill-test-'));
+    const previousCwd = process.cwd();
+    fs.mkdirSync(path.join(tempDir, 'container', 'skills'), { recursive: true });
+
+    try {
+      process.chdir(tempDir);
+      await processTaskIpc(
+        {
+          type: 'install_skill',
+          skillName: '../escape',
+          skillContent: '# bad',
+        },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(
+        fs.existsSync(path.join(tempDir, 'container', 'skills', '..', 'escape')),
+      ).toBe(false);
+      expect(
+        fs.existsSync(
+          path.join(tempDir, 'container', 'skills', '../escape', 'SKILL.md'),
+        ),
+      ).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

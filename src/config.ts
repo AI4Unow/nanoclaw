@@ -1,4 +1,3 @@
-import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
@@ -11,6 +10,8 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_ONLY',
+  'DISCORD_BOT_TOKEN',
+  'DISCORD_ONLY',
   'EXTERNAL_API_UNAVAILABLE_MESSAGE',
   'EXTERNAL_API_AUTH_ERROR_MESSAGE',
 ]);
@@ -36,7 +37,7 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || os.homedir();
+const HOME_DIR = process.env.HOME || '/Users/user';
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -88,3 +89,9 @@ export const TIMEZONE =
 export const EMAIL_SUBJECT_PREFIX = process.env.EMAIL_SUBJECT_PREFIX || '[Capie]';
 export const EMAIL_POLL_INTERVAL = parseInt(process.env.EMAIL_POLL_INTERVAL || '60000', 10);
 export const EMAIL_CHANNEL_ENABLED = process.env.EMAIL_CHANNEL_ENABLED !== 'false';
+
+// Discord configuration
+export const DISCORD_BOT_TOKEN =
+  process.env.DISCORD_BOT_TOKEN || envConfig.DISCORD_BOT_TOKEN || '';
+export const DISCORD_ONLY =
+  (process.env.DISCORD_ONLY || envConfig.DISCORD_ONLY) === 'true';

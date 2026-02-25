@@ -280,6 +280,39 @@ Use available_groups.json to find the JID for a group. The folder name should be
   },
 );
 
+server.tool(
+  'install_skill',
+  'Install or update a shared skill in container/skills. Main group only.',
+  {
+    skill_name: z
+      .string()
+      .regex(/^[a-z0-9-]+$/)
+      .describe('Skill directory name (lowercase letters, numbers, hyphens).'),
+    skill_content: z.string().min(1).describe('Full SKILL.md content.'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can install skills.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'install_skill',
+      skillName: args.skill_name,
+      skillContent: args.skill_content,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Skill "${args.skill_name}" install requested.` }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
