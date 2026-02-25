@@ -438,7 +438,6 @@ async function runQuery(
       allowedTools: [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
         'Task', 'TaskOutput', 'TaskStop',
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
@@ -447,7 +446,6 @@ async function runQuery(
         'mcp__gmail__*',
         'mcp__exa__*',
         'mcp__google-calendar__*',
-        'mcp__google-drive__*',
         'mcp__memory__*',
         'mcp__parallel-search__*',
         'mcp__parallel-task__*',
@@ -467,26 +465,19 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        gmail: { command: 'npx', args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'] },
+        gmail: { command: 'gmail-mcp', args: [] },
         ...(process.env.EXA_API_KEY ? {
           exa: {
-            command: 'npx',
-            args: ['-y', 'exa-mcp-server'],
+            command: 'exa-mcp-server',
+            args: [],
             env: {
               EXA_API_KEY: process.env.EXA_API_KEY,
             },
           },
         } : {}),
         'google-calendar': {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-calendar-autoauth-mcp'],
-          env: {
-            ...(process.env.GOOGLE_CREDENTIALS ? { GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS } : {}),
-          },
-        },
-        'google-drive': {
-          command: 'npx',
-          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          command: 'server-calendar-autoauth-mcp',
+          args: [],
           env: {
             ...(process.env.GOOGLE_CREDENTIALS ? { GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS } : {}),
           },

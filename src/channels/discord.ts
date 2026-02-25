@@ -21,6 +21,7 @@ export class DiscordChannel implements Channel {
   private client: Client | null = null;
   private opts: DiscordChannelOpts;
   private botToken: string;
+  private typingIntervals: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
@@ -222,15 +223,36 @@ export class DiscordChannel implements Channel {
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    if (!this.client || !isTyping) return;
-    try {
-      const channelId = jid.replace(/^dc:/, '');
-      const channel = await this.client.channels.fetch(channelId);
-      if (channel && 'sendTyping' in channel) {
-        await (channel as TextChannel).sendTyping();
+    if (!this.client) return;
+
+    if (!isTyping) {
+      // Stop the repeating typing indicator
+      const interval = this.typingIntervals.get(jid);
+      if (interval) {
+        clearInterval(interval);
+        this.typingIntervals.delete(jid);
       }
-    } catch (err) {
-      logger.debug({ jid, err }, 'Failed to send Discord typing indicator');
+      return;
     }
+
+    // Already running for this JID
+    if (this.typingIntervals.has(jid)) return;
+
+    const sendTyping = async () => {
+      try {
+        const channelId = jid.replace(/^dc:/, '');
+        const channel = await this.client!.channels.fetch(channelId);
+        if (channel && 'sendTyping' in channel) {
+          await (channel as TextChannel).sendTyping();
+        }
+      } catch (err) {
+        logger.debug({ jid, err }, 'Failed to send Discord typing indicator');
+      }
+    };
+
+    // Send immediately, then repeat every 8s (Discord typing expires at 10s)
+    await sendTyping();
+    const interval = setInterval(sendTyping, 8000);
+    this.typingIntervals.set(jid, interval);
   }
 }
