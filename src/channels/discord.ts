@@ -121,8 +121,8 @@ export class DiscordChannel implements Channel {
         }
       }
 
-      // Store chat metadata for discovery
-      this.opts.onChatMetadata(chatJid, timestamp, chatName);
+      // Store chat metadata for discovery (isGroup=true so it appears in available groups)
+      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'discord', true);
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
