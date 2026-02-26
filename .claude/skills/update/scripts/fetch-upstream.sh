@@ -26,13 +26,61 @@ if [ -z "$REMOTE" ]; then
 fi
 
 echo "Fetching from $REMOTE..."
-if ! git fetch "$REMOTE" main 2>&1; then
+
+run_git_fetch() {
+  local remote="$1"
+  local branch="$2"
+  node --input-type=commonjs - "$remote" "$branch" <<'NODE'
+const { spawnSync } = require('child_process');
+const [remote, branch] = process.argv.slice(2);
+const res = spawnSync('git', ['fetch', remote, branch], {
+  encoding: 'utf8',
+  timeout: 10000,
+  env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+});
+if (res.stdout) process.stdout.write(res.stdout);
+if (res.stderr) process.stderr.write(res.stderr);
+if (res.error && res.error.code === 'ETIMEDOUT') {
+  process.stderr.write('git fetch timed out after 10s\n');
+  process.exit(124);
+}
+if (typeof res.status === 'number') process.exit(res.status);
+process.exit(1);
+NODE
+}
+
+REMOTE_BRANCH="main"
+FETCH_OUTPUT=""
+FETCH_STATUS=0
+set +e
+FETCH_OUTPUT=$(run_git_fetch "$REMOTE" "$REMOTE_BRANCH" 2>&1)
+FETCH_STATUS=$?
+set -e
+
+if [ "$FETCH_STATUS" -ne 0 ] && echo "$FETCH_OUTPUT" | grep -q "couldn't find remote ref main"; then
+  echo "$FETCH_OUTPUT"
+  echo "Remote branch 'main' not found on $REMOTE, trying 'master'..."
+  REMOTE_BRANCH="master"
+  set +e
+  FETCH_OUTPUT=$(run_git_fetch "$REMOTE" "$REMOTE_BRANCH" 2>&1)
+  FETCH_STATUS=$?
+  set -e
+fi
+
+if [ "$FETCH_STATUS" -ne 0 ]; then
+  echo "$FETCH_OUTPUT"
   echo "<<< STATUS"
   echo "STATUS=error"
-  echo "ERROR=Failed to fetch from $REMOTE"
+  echo "ERROR=Failed to fetch from $REMOTE ($REMOTE_BRANCH)"
   echo "STATUS >>>"
   exit 1
 fi
+
+if [ -n "$FETCH_OUTPUT" ]; then
+  echo "$FETCH_OUTPUT"
+fi
+
+REMOTE_REF="$REMOTE/$REMOTE_BRANCH"
 
 # Get current version from local package.json
 CURRENT_VERSION="unknown"
@@ -61,12 +109,12 @@ CANDIDATES=$(node -e "
 # git archive errors if a path doesn't exist, so we check first.
 PATHS=""
 for candidate in $CANDIDATES; do
-  if [ -n "$(git ls-tree --name-only "$REMOTE/main" "$candidate" 2>/dev/null)" ]; then
+  if [ -n "$(git ls-tree --name-only "$REMOTE_REF" "$candidate" 2>/dev/null)" ]; then
     PATHS="$PATHS $candidate"
   fi
 done
 
-git archive "$REMOTE/main" -- $PATHS | tar -x -C "$TEMP_DIR"
+git archive "$REMOTE_REF" -- $PATHS | tar -x -C "$TEMP_DIR"
 
 # Get new version from extracted package.json
 NEW_VERSION="unknown"

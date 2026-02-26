@@ -221,28 +221,38 @@ describe('WhatsAppChannel', () => {
   // --- QR code and auth ---
 
   describe('authentication', () => {
-    it('exits process when QR code is emitted (no auth state)', async () => {
+    it('rejects connect() when QR code is emitted (no auth state)', async () => {
       vi.useFakeTimers();
       const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      try {
+        const opts = createTestOpts();
+        const channel = new WhatsAppChannel(opts);
 
-      const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+        // Start connect and keep the promise for assertion.
+        const connectResult = channel
+          .connect()
+          .then(
+            () => null,
+            (err) => err as Error,
+          );
 
-      // Start connect but don't await (it won't resolve - process exits)
-      channel.connect().catch(() => {});
+        // Flush microtasks so connectInternal registers handlers
+        await vi.advanceTimersByTimeAsync(0);
 
-      // Flush microtasks so connectInternal registers handlers
-      await vi.advanceTimersByTimeAsync(0);
+        // Emit QR code event
+        fakeSocket._ev.emit('connection.update', { qr: 'some-qr-data' });
 
-      // Emit QR code event
-      fakeSocket._ev.emit('connection.update', { qr: 'some-qr-data' });
+        // Advance timer past the 1000ms setTimeout before rejection
+        await vi.advanceTimersByTimeAsync(1500);
 
-      // Advance timer past the 1000ms setTimeout before exit
-      await vi.advanceTimersByTimeAsync(1500);
-
-      expect(mockExit).toHaveBeenCalledWith(1);
-      mockExit.mockRestore();
-      vi.useRealTimers();
+        const err = await connectResult;
+        expect(err).toBeInstanceOf(Error);
+        expect(err?.message).toContain('WhatsApp authentication required');
+        expect(mockExit).not.toHaveBeenCalled();
+      } finally {
+        mockExit.mockRestore();
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -264,7 +274,7 @@ describe('WhatsAppChannel', () => {
       // The channel should attempt to reconnect (calls connectInternal again)
     });
 
-    it('exits on loggedOut disconnect', async () => {
+    it('does not exit process on loggedOut disconnect after initial connect', async () => {
       const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
@@ -276,7 +286,7 @@ describe('WhatsAppChannel', () => {
       triggerDisconnect(401);
 
       expect(channel.isConnected()).toBe(false);
-      expect(mockExit).toHaveBeenCalledWith(0);
+      expect(mockExit).not.toHaveBeenCalled();
       mockExit.mockRestore();
     });
 
