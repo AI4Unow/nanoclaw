@@ -18,6 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import { buildPlaybookPrompt } from './playbook.js';
 
 interface ContainerInput {
   prompt: string;
@@ -192,6 +193,17 @@ const SECRET_ENV_VARS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'CLAUDE_CODE_OAUTH_TOKEN',
+  'PARALLEL_API_KEY',
+  'EXA_API_KEY',
+  'MEMORY_API_KEY',
+  'MEMORY_API_URL',
+  'NANOCLAW_MODEL',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -443,9 +455,7 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__gmail__*',
         'mcp__exa__*',
-        'mcp__google-calendar__*',
         'mcp__memory__*',
         'mcp__parallel-search__*',
         'mcp__parallel-task__*',
@@ -465,7 +475,6 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        gmail: { command: 'gmail-mcp', args: [] },
         ...(process.env.EXA_API_KEY ? {
           exa: {
             command: 'exa-mcp-server',
@@ -475,13 +484,6 @@ async function runQuery(
             },
           },
         } : {}),
-        'google-calendar': {
-          command: 'server-calendar-autoauth-mcp',
-          args: [],
-          env: {
-            ...(process.env.GOOGLE_CREDENTIALS ? { GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS } : {}),
-          },
-        },
         memory: {
           command: 'node',
           args: [path.join(path.dirname(mcpServerPath), 'memory-mcp-stdio.js')],
@@ -587,7 +589,7 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+    prompt = buildPlaybookPrompt(prompt);
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {

@@ -114,3 +114,18 @@ Recall recent context:
 
 Search by tag:
 `sqlite3 /workspace/group/projects/{slug}/memory.db "SELECT content FROM memories WHERE tags LIKE '%pricing%';"`
+
+## Playbooks
+
+If your group has a `playbook.md` file, it defines your autonomous missions — work you do proactively on a schedule without being asked.
+
+When running scheduled tasks, your playbook and previous state are automatically provided in the prompt. Follow the playbook phases and update your state file after each run.
+
+State file: `state/playbook-state.json` in your group workspace.
+
+Convention:
+- JSON format with `lastRun`, `runCount`, and mission-specific data
+- Read previous state at the start to avoid duplicate work
+- Write updated state after completing all phases
+- Create the `state/` directory if it doesn't exist
+
