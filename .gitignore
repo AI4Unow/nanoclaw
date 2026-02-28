@@ -9,14 +9,20 @@ store/
 data/
 logs/
 
-# Groups - only track base structure and specific CLAUDE.md files
+# Groups - only track base structure, CLAUDE.md, and playbook.md
 groups/*
 !groups/main/
 !groups/global/
+!groups/procaffe/
 groups/main/*
 groups/global/*
+groups/procaffe/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/procaffe/CLAUDE.md
+!groups/main/playbook.md
+!groups/global/playbook.md
+!groups/procaffe/playbook.md
 
 # Secrets
 *.keys.json
